@@ -18,6 +18,7 @@ fn main() {
         },
         Box::new(|_cc| Box::new(Test(8))),
     )
+    .unwrap()
 }
 
 struct Test(usize);

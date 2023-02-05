@@ -232,11 +232,11 @@ impl Svg {
                 }
             }
 
-            let mut mesh = ui
-                .memory()
-                .caches
-                .cache::<FrameCache<_, Tessellator>>()
-                .get(TessellateCacheKey(&self, size));
+            let mut mesh = ui.memory_mut(|mem| {
+                mem.caches
+                    .cache::<FrameCache<_, Tessellator>>()
+                    .get(TessellateCacheKey(&self, size))
+            });
             mesh.translate(rect.min.to_vec2());
             if let Some(color_fonc) = self.color_func {
                 mesh.vertices
