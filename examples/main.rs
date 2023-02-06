@@ -97,7 +97,34 @@ impl eframe::App for Test {
                         ui.label("contain");
                         rect!(ui, size);
                         Svg::new(ICON)
-                            .with_fit_mode(FitMode::Contain)
+                            .with_fit_mode(FitMode::Contain(Margin::default()))
+                            .show_sized(ui, size);
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.label("contain margin");
+                        let margin = Margin {
+                            left: 16.0,
+                            right: 4.0,
+                            top: 4.0,
+                            bottom: 16.0,
+                        };
+                        rect!(ui, size);
+                        ui.painter().rect_stroke(
+                            {
+                                let mut rect = Rect::from_min_size(ui.cursor().min, size.into());
+                                rect.min += margin.left_top();
+                                rect.max -= margin.right_bottom();
+                                rect
+                            },
+                            Rounding::none(),
+                            Stroke {
+                                width: 1.0,
+                                color: Color32::DARK_RED,
+                            },
+                        );
+                        Svg::new(ICON)
+                            .with_fit_mode(FitMode::Contain(margin))
                             .show_sized(ui, size);
                     });
                     ui.separator();

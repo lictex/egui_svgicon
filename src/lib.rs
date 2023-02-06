@@ -20,7 +20,7 @@ pub enum FitMode {
     Size(Vec2),
     Factor(f32),
     Cover,
-    Contain,
+    Contain(Margin),
 }
 
 pub struct Svg {
@@ -57,7 +57,10 @@ impl std::hash::Hash for Svg {
                 bytes!(*f, f32).hash(state);
             }
             FitMode::Cover => 3usize.hash(state),
-            FitMode::Contain => 4usize.hash(state),
+            FitMode::Contain(margin) => {
+                4usize.hash(state);
+                bytes!(*margin, Margin).hash(state);
+            }
         }
     }
 }
@@ -122,7 +125,7 @@ impl Svg {
             color_func: None,
             tolerance: 1.0,
             scale_tolerance: true,
-            fit_mode: FitMode::Contain,
+            fit_mode: FitMode::Contain(Default::default()),
         }
     }
     /// set the tessellation tolerance
@@ -170,6 +173,7 @@ impl Svg {
 
         let size = size.into();
         let (id, frame_rect) = ui.allocate_space(size);
+        let mut inner_frame_rect = frame_rect;
         let size = match self.fit_mode {
             FitMode::None => self.svg_rect().size(),
             FitMode::Size(s) => s,
@@ -187,21 +191,27 @@ impl Svg {
                     ]
                 },
             ),
-            FitMode::Contain => Vec2::from(
-                if frame_rect.aspect_ratio() > self.svg_rect().aspect_ratio() {
-                    [
-                        self.svg_rect().width() * frame_rect.height() / self.svg_rect().height(),
-                        frame_rect.height(),
-                    ]
-                } else {
-                    [
-                        frame_rect.width(),
-                        self.svg_rect().height() * frame_rect.width() / self.svg_rect().width(),
-                    ]
-                },
-            ),
+            FitMode::Contain(margin) => {
+                inner_frame_rect.min += margin.left_top();
+                inner_frame_rect.max -= margin.right_bottom();
+                Vec2::from(
+                    if inner_frame_rect.aspect_ratio() > self.svg_rect().aspect_ratio() {
+                        [
+                            self.svg_rect().width() * inner_frame_rect.height()
+                                / self.svg_rect().height(),
+                            inner_frame_rect.height(),
+                        ]
+                    } else {
+                        [
+                            inner_frame_rect.width(),
+                            self.svg_rect().height() * inner_frame_rect.width()
+                                / self.svg_rect().width(),
+                        ]
+                    },
+                )
+            }
         };
-        let rect = Align2::CENTER_CENTER.align_size_within_rect(size, frame_rect);
+        let rect = Align2::CENTER_CENTER.align_size_within_rect(size, inner_frame_rect);
 
         #[cfg(not(feature = "cached"))]
         let shape = self.tessellate(rect, size / self.svg_rect().size());
