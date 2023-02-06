@@ -3,7 +3,6 @@ use lyon::lyon_tessellation::geometry_builder::*;
 use lyon::lyon_tessellation::*;
 use lyon::math::Point;
 use lyon::path::PathEvent;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// ???
@@ -23,10 +22,13 @@ pub enum FitMode {
     Contain(Margin),
 }
 
+#[cfg(not(feature = "cached"))]
+type SvgTree = usvg::Tree;
+#[cfg(feature = "cached")]
+type SvgTree = (u64, std::rc::Rc<usvg::Tree>);
+
 pub struct Svg {
-    tree: Rc<usvg::Tree>,
-    #[cfg(feature = "cached")]
-    key: u64,
+    tree: SvgTree,
     color_func: Option<Arc<dyn Fn(&mut Color32)>>,
     tolerance: f32,
     scale_tolerance: bool,
@@ -36,8 +38,7 @@ pub struct Svg {
 impl std::hash::Hash for Svg {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let Self {
-            tree: _,
-            key,
+            tree: (key, _),
             color_func: _,
             tolerance,
             scale_tolerance,
@@ -81,13 +82,14 @@ impl Svg {
         puffin::profile_function!();
 
         #[cfg(not(feature = "cached"))]
-        let tree = Rc::new(usvg::Tree::from_data(data, &usvg::Options::default()).unwrap());
+        let tree = usvg::Tree::from_data(data, &usvg::Options::default()).unwrap();
 
         #[cfg(feature = "cached")]
-        let (key, tree) = {
+        let tree = {
             use egui::epaint::ahash::*;
             use std::cell::RefCell;
             use std::hash::*;
+            use std::rc::Rc;
 
             thread_local! {
                 static CACHE: RefCell<HashMap<u64, Rc<usvg::Tree>>> = Default::default();
@@ -120,8 +122,6 @@ impl Svg {
 
         Svg {
             tree,
-            #[cfg(feature = "cached")]
-            key,
             color_func: None,
             tolerance: 1.0,
             scale_tolerance: true,
@@ -212,6 +212,12 @@ impl Svg {
             }
         };
         let rect = Align2::CENTER_CENTER.align_size_within_rect(size, inner_frame_rect);
+        let response = ui.interact(rect, id, Sense::hover());
+
+        #[cfg(feature = "culled")]
+        if !ui.clip_rect().intersects(rect) {
+            return response;
+        }
 
         #[cfg(not(feature = "cached"))]
         let shape = self.tessellate(rect, size / self.svg_rect().size());
@@ -257,15 +263,26 @@ impl Svg {
         };
 
         ui.painter().with_clip_rect(frame_rect).add(shape);
-        ui.interact(rect, id, Sense::hover())
+
+        response
     }
 
     fn svg_rect(&self) -> Rect {
-        self.tree.view_box.rect.convert()
+        #[cfg(not(feature = "cached"))]
+        let tree = &self.tree;
+        #[cfg(feature = "cached")]
+        let tree = &self.tree.1;
+
+        tree.view_box.rect.convert()
     }
     fn tessellate(&self, rect: Rect, scale: Vec2) -> Mesh {
         #[cfg(feature = "puffin")]
         puffin::profile_function!();
+
+        #[cfg(not(feature = "cached"))]
+        let tree = &self.tree;
+        #[cfg(feature = "cached")]
+        let tree = &self.tree.1;
 
         let mut buffer = VertexBuffers::<_, u32>::new();
         self.tessellate_recursive(
@@ -274,7 +291,7 @@ impl Svg {
             &mut buffer,
             &mut FillTessellator::new(),
             &mut StrokeTessellator::new(),
-            &self.tree.root,
+            &tree.root,
             Default::default(),
         );
 

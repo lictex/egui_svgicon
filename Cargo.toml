@@ -16,8 +16,9 @@ eframe = { version = "0.20", features = ["wgpu"] }
 # puffin_egui = { version = "0.19" }
 
 [features]
-cached = []
-static_cached = ["cached"]
+cached = []                # cache svg trees and meshes
+static_cached = ["cached"] # use static ptr as svg trees' cache key
+culled = []                # skip rendering offscreen shapes
 
 puffin = ["dep:puffin"]
 
