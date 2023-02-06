@@ -3,7 +3,6 @@ use lyon::lyon_tessellation::geometry_builder::*;
 use lyon::lyon_tessellation::*;
 use lyon::math::Point;
 use lyon::path::PathEvent;
-use std::sync::Arc;
 
 /// ???
 #[cfg(feature = "cached")]
@@ -29,7 +28,8 @@ type SvgTree = (u64, std::rc::Rc<usvg::Tree>);
 
 pub struct Svg {
     tree: SvgTree,
-    color_func: Option<Arc<dyn Fn(&mut Color32)>>,
+    color_override: Option<Color32>,
+    color_from_style: bool,
     tolerance: f32,
     scale_tolerance: bool,
     fit_mode: FitMode,
@@ -40,7 +40,8 @@ impl std::hash::Hash for Svg {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let Self {
             tree: (key, _),
-            color_func: _,
+            color_override: _,
+            color_from_style: _,
             tolerance,
             scale_tolerance,
             fit_mode,
@@ -124,7 +125,8 @@ impl Svg {
 
         Svg {
             tree,
-            color_func: None,
+            color_override: None,
+            color_from_style: false,
             tolerance: 1.0,
             scale_tolerance: true,
             fit_mode: FitMode::Contain(Default::default()),
@@ -142,13 +144,13 @@ impl Svg {
         self
     }
     /// override all elements' color
-    pub fn with_color_remap(mut self, func: impl Fn(&mut Color32) + 'static) -> Self {
-        self.color_func = Some(Arc::new(func));
+    pub fn with_color(mut self, color: Color32) -> Self {
+        self.color_override = Some(color);
         self
     }
-    /// override all elements' color
-    pub fn with_color(mut self, color: Color32) -> Self {
-        self.color_func = Some(Arc::new(move |c| *c = color));
+    /// override all elements' color with fg_stroke
+    pub fn with_color_from_style(mut self, from_style: bool) -> Self {
+        self.color_from_style = from_style;
         self
     }
     /// set how the shape fits into the frame
@@ -228,10 +230,10 @@ impl Svg {
         }
 
         #[cfg(not(feature = "cached"))]
-        let shape = self.tessellate(rect, size / self.svg_rect().size());
+        let mut shape = self.tessellate(rect, size / self.svg_rect().size());
 
         #[cfg(feature = "cached")]
-        let shape = {
+        let mut shape = {
             use egui::util::cache::*;
             use std::hash::*;
 
@@ -262,13 +264,15 @@ impl Svg {
                     .get(TessellateCacheKey(&self, size))
             });
             mesh.translate(rect.min.to_vec2());
-            if let Some(color_fonc) = self.color_func {
-                mesh.vertices
-                    .iter_mut()
-                    .for_each(|f| color_fonc(&mut f.color));
-            }
             mesh
         };
+
+        if let Some(color) = self.color_override.or_else(|| {
+            self.color_from_style
+                .then(|| ui.style().interact(&response).fg_stroke.color)
+        }) {
+            shape.vertices.iter_mut().for_each(|f| f.color = color);
+        }
 
         ui.painter().with_clip_rect(frame_rect).add(shape);
 
@@ -344,11 +348,7 @@ impl Svg {
                                         usvg::Paint::Color(c) => *c,
                                         _ => usvg::Color::black(),
                                     };
-                                    let mut color = (color, opacity).convert();
-                                    if let Some(func) = &self.color_func {
-                                        func(&mut color);
-                                    }
-                                    color
+                                    (color, opacity).convert()
                                 },
                             }
                         };
