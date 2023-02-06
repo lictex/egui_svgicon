@@ -162,6 +162,17 @@ impl eframe::App for Test {
                     ui.label("sized");
                 });
                 ui.separator();
+                let response = Svg::new(ICON).with_sense(Sense::click_and_drag()).show(ui);
+                ui.horizontal(|ui| {
+                    ui.label("sense: ");
+                    if response.hovered() {
+                        ui.label("hovered");
+                    }
+                    if response.dragged() {
+                        ui.label("dragged");
+                    }
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("many");
                     ui.add(DragValue::new(&mut self.0));

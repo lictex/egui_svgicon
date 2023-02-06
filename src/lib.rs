@@ -33,6 +33,7 @@ pub struct Svg {
     tolerance: f32,
     scale_tolerance: bool,
     fit_mode: FitMode,
+    sense: Sense,
 }
 #[cfg(feature = "cached")]
 impl std::hash::Hash for Svg {
@@ -43,6 +44,7 @@ impl std::hash::Hash for Svg {
             tolerance,
             scale_tolerance,
             fit_mode,
+            sense: _,
         } = self;
         key.hash(state);
         bytes!(*tolerance, f32).hash(state);
@@ -126,6 +128,7 @@ impl Svg {
             tolerance: 1.0,
             scale_tolerance: true,
             fit_mode: FitMode::Contain(Default::default()),
+            sense: Sense::hover(),
         }
     }
     /// set the tessellation tolerance
@@ -151,6 +154,11 @@ impl Svg {
     /// set how the shape fits into the frame
     pub fn with_fit_mode(mut self, fit_mode: FitMode) -> Self {
         self.fit_mode = fit_mode;
+        self
+    }
+    /// set response sense
+    pub fn with_sense(mut self, sense: Sense) -> Self {
+        self.sense = sense;
         self
     }
     /// show the icon at the svg's original size
@@ -212,7 +220,7 @@ impl Svg {
             }
         };
         let rect = Align2::CENTER_CENTER.align_size_within_rect(size, inner_frame_rect);
-        let response = ui.interact(frame_rect, id, Sense::hover());
+        let response = ui.interact(frame_rect, id, self.sense);
 
         #[cfg(feature = "culled")]
         if !ui.clip_rect().intersects(rect) {
