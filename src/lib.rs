@@ -212,7 +212,7 @@ impl Svg {
             }
         };
         let rect = Align2::CENTER_CENTER.align_size_within_rect(size, inner_frame_rect);
-        let response = ui.interact(rect, id, Sense::hover());
+        let response = ui.interact(frame_rect, id, Sense::hover());
 
         #[cfg(feature = "culled")]
         if !ui.clip_rect().intersects(rect) {
