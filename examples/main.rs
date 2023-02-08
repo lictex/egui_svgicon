@@ -190,6 +190,38 @@ impl eframe::App for Test {
                     }
                 });
                 ui.separator();
+                ui.label("button like");
+                ui.horizontal(|ui| {
+                    Svg::new(ICON)
+                        .with_color_from_style()
+                        .with_background_from_style()
+                        .with_fit_mode(FitMode::Contain(Margin::symmetric(
+                            ui.style().spacing.button_padding.x,
+                            ui.style().spacing.button_padding.y,
+                        )))
+                        .with_sense(Sense::click_and_drag())
+                        .show(ui);
+                    let _ = ui.button("real");
+                    ui.scope(|ui| {
+                        ui.style_mut().visuals.widgets.active.rounding = Rounding::same(f32::MAX);
+                        ui.style_mut().visuals.widgets.inactive.rounding = Rounding::same(f32::MAX);
+                        ui.style_mut().visuals.widgets.hovered.rounding = Rounding::same(f32::MAX);
+
+                        Svg::new(include_bytes!("test_gradient.svg"))
+                            .with_background_from_style()
+                            .with_sense(Sense::click_and_drag())
+                            .show(ui);
+                    });
+                    Svg::new(ICON)
+                        .with_fit_mode(FitMode::Contain(Margin::same(4.0)))
+                        .with_background(
+                            Rounding::same(f32::MAX),
+                            Color32::RED,
+                            Stroke::new(1.0, Color32::BLACK),
+                        )
+                        .show(ui);
+                });
+                ui.separator();
                 ui.label("gradient");
                 ui.horizontal(|ui| {
                     ui.set_height(64.0);

@@ -39,6 +39,16 @@ enum ColorOverride {
     Gradient(gradient::Gradient),
 }
 
+enum Background {
+    None,
+    FromStyle,
+    Custom {
+        fill: Color32,
+        rounding: Rounding,
+        stroke: Stroke,
+    },
+}
+
 #[cfg(not(feature = "cached"))]
 type SvgTree = usvg::Tree;
 #[cfg(feature = "cached")]
@@ -47,6 +57,7 @@ type SvgTree = (u64, std::rc::Rc<usvg::Tree>);
 pub struct Svg {
     tree: SvgTree,
     color_override: ColorOverride,
+    background: Background,
     tolerance: f32,
     scale_tolerance: bool,
     fit_mode: FitMode,
@@ -58,6 +69,7 @@ impl std::hash::Hash for Svg {
         let Self {
             tree: (key, _),
             color_override: _,
+            background: _,
             tolerance,
             scale_tolerance,
             fit_mode,
@@ -142,6 +154,7 @@ impl Svg {
         Svg {
             tree,
             color_override: ColorOverride::None,
+            background: Background::None,
             tolerance: 1.0,
             scale_tolerance: true,
             fit_mode: FitMode::Contain(Default::default()),
@@ -202,6 +215,20 @@ impl Svg {
         self.color_override = ColorOverride::FromStyle;
         self
     }
+    /// set background
+    pub fn with_background(mut self, rounding: Rounding, fill: Color32, stroke: Stroke) -> Self {
+        self.background = Background::Custom {
+            fill,
+            rounding,
+            stroke,
+        };
+        self
+    }
+    /// set background from style
+    pub fn with_background_from_style(mut self) -> Self {
+        self.background = Background::FromStyle;
+        self
+    }
     /// set how the shape fits into the frame
     pub fn with_fit_mode(mut self, fit_mode: FitMode) -> Self {
         self.fit_mode = fit_mode;
@@ -214,7 +241,10 @@ impl Svg {
     }
     /// show the icon at the svg's original size
     pub fn show(self, ui: &mut Ui) -> Response {
-        let size = self.svg_rect().size();
+        let mut size = self.svg_rect().size();
+        if let FitMode::Contain(m) = self.fit_mode {
+            size += m.sum();
+        }
         self.show_sized(ui, size)
     }
     /// show the icon. size is based on available height of the ui
@@ -347,6 +377,24 @@ impl Svg {
                     .for_each(|v| v.color = g.color_at_pos(svg_pos!(v)));
             }
         };
+
+        match &self.background {
+            Background::None => {}
+            Background::FromStyle => {
+                let visual = ui.style().interact(&response);
+                ui.painter().rect(
+                    frame_rect,
+                    visual.rounding,
+                    visual.bg_fill,
+                    visual.bg_stroke,
+                );
+            }
+            Background::Custom {
+                fill,
+                rounding,
+                stroke,
+            } => ui.painter().rect(frame_rect, *rounding, *fill, *stroke),
+        }
 
         ui.painter().with_clip_rect(frame_rect).add(shape);
 
