@@ -19,6 +19,7 @@ eframe = { version = "0.20", features = ["wgpu"] }
 cached = []                # cache svg trees and meshes
 static_cached = ["cached"] # use static ptr as svg trees' cache key
 culled = []                # skip rendering offscreen shapes
+gradient = []              # vertex color based simple gradient
 
 puffin = ["dep:puffin"]
 

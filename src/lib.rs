@@ -11,6 +11,13 @@ macro_rules! bytes {
         unsafe { std::mem::transmute::<$T, [u8; std::mem::size_of::<$T>()]>($t) }
     };
 }
+macro_rules! append_transform {
+    ($a:expr,$b:expr) => {{
+        let mut transform = $a;
+        transform.append(&$b);
+        transform
+    }};
+}
 
 #[derive(Clone, Copy)]
 pub enum FitMode {
@@ -327,13 +334,11 @@ impl Svg {
                 usvg::NodeKind::Path(p) => {
                     let new_egui_vertex =
                         |point: Point, paint: &usvg::Paint, opacity: f64| -> epaint::Vertex {
+                            let transform = append_transform!(parent_transform, p.transform);
                             epaint::Vertex {
                                 pos: {
-                                    let mut pos = Vec2::from(point.to_array());
-                                    pos = {
-                                        let mut transform = parent_transform;
-                                        transform.append(&p.transform);
-                                        let (x, y) = transform.apply(pos.x as _, pos.y as _);
+                                    let mut pos = {
+                                        let (x, y) = transform.apply(point.x as _, point.y as _);
                                         Vec2::new(x as _, y as _)
                                     };
                                     pos -= self.svg_rect().min.to_vec2();
@@ -344,9 +349,13 @@ impl Svg {
                                 },
                                 uv: Pos2::ZERO,
                                 color: {
-                                    let color = match paint {
-                                        usvg::Paint::Color(c) => *c,
-                                        _ => usvg::Color::black(),
+                                    let (color, opacity) = match paint {
+                                        usvg::Paint::Color(c) => (*c, opacity),
+                                        #[cfg(feature = "gradient")]
+                                        usvg::Paint::LinearGradient(g) => {
+                                            linear_gradient(g, point, transform)
+                                        }
+                                        _ => (usvg::Color::black(), 1.0),
                                     };
                                     (color, opacity).convert()
                                 },
@@ -384,23 +393,86 @@ impl Svg {
                             .unwrap();
                     }
                 }
-                usvg::NodeKind::Group(g) => {
-                    let mut transform = parent_transform;
-                    transform.append(&g.transform);
-                    self.tessellate_recursive(
-                        scale,
-                        rect,
-                        buffer,
-                        fill_tesselator,
-                        stroke_tesselator,
-                        &node,
-                        transform,
-                    )
-                }
+                usvg::NodeKind::Group(g) => self.tessellate_recursive(
+                    scale,
+                    rect,
+                    buffer,
+                    fill_tesselator,
+                    stroke_tesselator,
+                    &node,
+                    append_transform!(parent_transform, g.transform),
+                ),
                 usvg::NodeKind::Image(_) | usvg::NodeKind::Text(_) => {}
             }
         }
     }
+}
+
+#[cfg(feature = "gradient")]
+fn linear_gradient(
+    g: &usvg::LinearGradient,
+    point: Point,
+    transform: usvg::Transform,
+) -> (usvg::Color, f64) {
+    use lyon::geom::euclid::Vector2D;
+    use lyon::geom::Line;
+
+    let point = {
+        let (x, y) = transform.apply(point.x as _, point.y as _);
+        Point::new(x as _, y as _)
+    };
+    let fac = {
+        let gradient_transform = append_transform!(transform, g.transform);
+        let ((x1, y1), (x2, y2)) = (
+            gradient_transform.apply(g.x1, g.y1),
+            gradient_transform.apply(g.x2, g.y2),
+        );
+        let line = Line {
+            point: Point::new(x1 as _, y1 as _),
+            vector: Vector2D::new(-(x2 - x1) as _, (y2 - y1) as _).yx(),
+        };
+        line.signed_distance_to_point(&point) / line.vector.length()
+    } as f64;
+
+    let fac = match g.spread_method {
+        usvg::SpreadMethod::Pad => fac,
+        usvg::SpreadMethod::Reflect => 1.0 - (fac.abs() % 2.0 - 1.0).abs(),
+        usvg::SpreadMethod::Repeat => fac - fac.floor(),
+    };
+
+    let mut local_fac = 0.0;
+    let [(mut color_a, mut opacity_a), (mut color_b, mut opacity_b)] =
+        [g.stops
+            .first()
+            .map(|f| (f.color, f.opacity.get()))
+            .unwrap_or((usvg::Color::black(), 0.0)); 2];
+    for stop in g.stops.windows(2) {
+        let offset_a = stop[0].offset.get();
+        let offset_b = stop[1].offset.get();
+        if fac > offset_a {
+            local_fac = (fac - offset_a) / (offset_b - offset_a);
+            color_a = stop[0].color;
+            opacity_a = stop[0].opacity.get();
+            color_b = stop[1].color;
+            opacity_b = stop[1].opacity.get();
+            break;
+        }
+    }
+    macro_rules! mix {
+        ($a:expr,$b:expr,$f:expr) => {{
+            let mut _r = $a;
+            _r = (($a as f64) * (1.0 as f64 - $f as f64) + ($b as f64) * ($f as f64)) as _;
+            _r
+        }};
+    }
+    (
+        usvg::Color::new_rgb(
+            mix!(color_a.red, color_b.red, local_fac),
+            mix!(color_a.green, color_b.green, local_fac),
+            mix!(color_a.blue, color_b.blue, local_fac),
+        ),
+        mix!(opacity_a, opacity_b, local_fac),
+    )
 }
 
 // https://github.com/nical/lyon/blob/f097646635a4df9d99a51f0d81b538e3c3aa1adf/examples/wgpu_svg/src/main.rs#L677

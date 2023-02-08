@@ -176,6 +176,15 @@ impl eframe::App for Test {
                     }
                 });
                 ui.separator();
+                ui.label("gradient");
+                ui.horizontal(|ui| {
+                    ui.set_height(64.0);
+                    Svg::new(include_bytes!("test_gradient.svg")).show_justified(ui);
+                    Svg::new(include_bytes!("test_gradient_overflow.svg"))
+                        .with_tolerance(0.01)
+                        .show_justified(ui);
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("many");
                     ui.add(DragValue::new(&mut self.0));
