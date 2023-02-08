@@ -1,8 +1,10 @@
 use egui::*;
-use lyon::lyon_tessellation::geometry_builder::*;
-use lyon::lyon_tessellation::*;
-use lyon::math::Point;
-use lyon::path::PathEvent;
+use utils::*;
+
+#[cfg(feature = "gradient")]
+mod gradient;
+mod tessellation;
+mod utils;
 
 /// ???
 #[cfg(feature = "cached")]
@@ -10,13 +12,6 @@ macro_rules! bytes {
     ($t:expr, $T:ty) => {
         unsafe { std::mem::transmute::<$T, [u8; std::mem::size_of::<$T>()]>($t) }
     };
-}
-macro_rules! append_transform {
-    ($a:expr,$b:expr) => {{
-        let mut transform = $a;
-        transform.append(&$b);
-        transform
-    }};
 }
 
 #[derive(Clone, Copy)]
@@ -28,6 +23,21 @@ pub enum FitMode {
     Contain(Margin),
 }
 
+#[derive(Clone, Copy)]
+pub enum TextureWrapMode {
+    Clamp,
+    Repeat,
+    Mirror,
+}
+
+enum ColorOverride {
+    None,
+    FromStyle,
+    Color(Color32),
+    #[cfg(feature = "gradient")]
+    Gradient(gradient::Gradient),
+}
+
 #[cfg(not(feature = "cached"))]
 type SvgTree = usvg::Tree;
 #[cfg(feature = "cached")]
@@ -35,8 +45,7 @@ type SvgTree = (u64, std::rc::Rc<usvg::Tree>);
 
 pub struct Svg {
     tree: SvgTree,
-    color_override: Option<Color32>,
-    color_from_style: bool,
+    color_override: ColorOverride,
     tolerance: f32,
     scale_tolerance: bool,
     fit_mode: FitMode,
@@ -48,7 +57,6 @@ impl std::hash::Hash for Svg {
         let Self {
             tree: (key, _),
             color_override: _,
-            color_from_style: _,
             tolerance,
             scale_tolerance,
             fit_mode,
@@ -132,8 +140,7 @@ impl Svg {
 
         Svg {
             tree,
-            color_override: None,
-            color_from_style: false,
+            color_override: ColorOverride::None,
             tolerance: 1.0,
             scale_tolerance: true,
             fit_mode: FitMode::Contain(Default::default()),
@@ -152,12 +159,35 @@ impl Svg {
     }
     /// override all elements' color
     pub fn with_color(mut self, color: Color32) -> Self {
-        self.color_override = Some(color);
+        self.color_override = ColorOverride::Color(color);
+        self
+    }
+    /// override all elements' color with given gradient
+    pub fn with_gradient(
+        mut self,
+        colors: &[(f32, Color32)],
+        start: Pos2,
+        end: Pos2,
+        wrap_mode: TextureWrapMode,
+    ) -> Self {
+        #[cfg(feature = "gradient")]
+        {
+            self.color_override = ColorOverride::Gradient(gradient::Gradient {
+                colors: colors
+                    .iter()
+                    .copied()
+                    .map(|(fac, color)| gradient::GradientColor { fac, color })
+                    .collect(),
+                start,
+                end,
+                wrap_mode,
+            });
+        }
         self
     }
     /// override all elements' color with fg_stroke
-    pub fn with_color_from_style(mut self, from_style: bool) -> Self {
-        self.color_from_style = from_style;
+    pub fn with_color_from_style(mut self) -> Self {
+        self.color_override = ColorOverride::FromStyle;
         self
     }
     /// set how the shape fits into the frame
@@ -258,7 +288,8 @@ impl Svg {
             struct Tessellator;
             impl ComputerMut<TessellateCacheKey<'_>, Mesh> for Tessellator {
                 fn compute(&mut self, TessellateCacheKey(svg, size): TessellateCacheKey) -> Mesh {
-                    svg.tessellate(
+                    tessellation::tessellate(
+                        svg,
                         Rect::from_min_size(Pos2::ZERO, size),
                         size / svg.svg_rect().size(),
                     )
@@ -273,341 +304,40 @@ impl Svg {
             mesh.translate(rect.min.to_vec2());
             mesh
         };
-
-        if let Some(color) = self.color_override.or_else(|| {
-            self.color_from_style
-                .then(|| ui.style().interact(&response).fg_stroke.color)
-        }) {
-            shape.vertices.iter_mut().for_each(|f| f.color = color);
+        let color_func: Option<Box<dyn Fn(&mut epaint::Vertex)>> = match &self.color_override {
+            ColorOverride::None => None,
+            ColorOverride::FromStyle => {
+                let c = ui.style().interact(&response).fg_stroke.color;
+                Some(Box::new(move |f| f.color = c))
+            }
+            ColorOverride::Color(c) => Some(Box::new(move |f| f.color = *c)),
+            #[cfg(feature = "gradient")]
+            ColorOverride::Gradient(g) => {
+                let svg_rect = self.svg_rect();
+                Some(Box::new(move |f| {
+                    f.color = g.color_at_pos(
+                        ((f.pos - rect.min + svg_rect.min.to_vec2())
+                            * (svg_rect.size() / rect.size()))
+                        .to_pos2(),
+                    )
+                }))
+            }
+        };
+        if let Some(color_func) = color_func {
+            shape.vertices.iter_mut().for_each(color_func);
         }
 
         ui.painter().with_clip_rect(frame_rect).add(shape);
 
         response
     }
-
-    fn svg_rect(&self) -> Rect {
+    /// original viewbox of the svg shape
+    pub fn svg_rect(&self) -> Rect {
         #[cfg(not(feature = "cached"))]
         let tree = &self.tree;
         #[cfg(feature = "cached")]
         let tree = &self.tree.1;
 
-        tree.view_box.rect.convert()
-    }
-    fn tessellate(&self, rect: Rect, scale: Vec2) -> Mesh {
-        #[cfg(feature = "puffin")]
-        puffin::profile_function!();
-
-        #[cfg(not(feature = "cached"))]
-        let tree = &self.tree;
-        #[cfg(feature = "cached")]
-        let tree = &self.tree.1;
-
-        let mut buffer = VertexBuffers::<_, u32>::new();
-        self.tessellate_recursive(
-            scale,
-            rect,
-            &mut buffer,
-            &mut FillTessellator::new(),
-            &mut StrokeTessellator::new(),
-            &tree.root,
-            Default::default(),
-        );
-
-        let mut mesh = Mesh::default();
-        std::mem::swap(&mut buffer.vertices, &mut mesh.vertices);
-        std::mem::swap(&mut buffer.indices, &mut mesh.indices);
-        mesh
-    }
-    fn tessellate_recursive(
-        &self,
-        scale: Vec2,
-        rect: Rect,
-        buffer: &mut VertexBuffers<epaint::Vertex, u32>,
-        fill_tesselator: &mut FillTessellator,
-        stroke_tesselator: &mut StrokeTessellator,
-        parent: &usvg::Node,
-        parent_transform: usvg::Transform,
-    ) {
-        for node in parent.children() {
-            match &*node.borrow() {
-                usvg::NodeKind::Path(p) => {
-                    let new_egui_vertex =
-                        |point: Point, paint: &usvg::Paint, opacity: f64| -> epaint::Vertex {
-                            let transform = append_transform!(parent_transform, p.transform);
-                            epaint::Vertex {
-                                pos: {
-                                    let mut pos = {
-                                        let (x, y) = transform.apply(point.x as _, point.y as _);
-                                        Vec2::new(x as _, y as _)
-                                    };
-                                    pos -= self.svg_rect().min.to_vec2();
-                                    pos.x *= scale.x;
-                                    pos.y *= scale.y;
-                                    pos += rect.min.to_vec2();
-                                    pos.to_pos2()
-                                },
-                                uv: Pos2::ZERO,
-                                color: {
-                                    let (color, opacity) = match paint {
-                                        usvg::Paint::Color(c) => (*c, opacity),
-                                        #[cfg(feature = "gradient")]
-                                        usvg::Paint::LinearGradient(g) => {
-                                            linear_gradient(g, point, transform)
-                                        }
-                                        _ => (usvg::Color::black(), 1.0),
-                                    };
-                                    (color, opacity).convert()
-                                },
-                            }
-                        };
-                    let tolerance = if self.scale_tolerance {
-                        self.tolerance / scale.max_elem()
-                    } else {
-                        self.tolerance
-                    };
-                    if let Some(fill) = &p.fill {
-                        fill_tesselator
-                            .tessellate(
-                                p.convert(),
-                                &FillOptions::tolerance(tolerance),
-                                &mut BuffersBuilder::new(buffer, |f: FillVertex| {
-                                    new_egui_vertex(f.position(), &fill.paint, fill.opacity.get())
-                                }),
-                            )
-                            .unwrap();
-                    }
-                    if let Some(stroke) = &p.stroke {
-                        stroke_tesselator
-                            .tessellate(
-                                p.convert(),
-                                &stroke.convert().with_tolerance(tolerance),
-                                &mut BuffersBuilder::new(buffer, |f: StrokeVertex| {
-                                    new_egui_vertex(
-                                        f.position(),
-                                        &stroke.paint,
-                                        stroke.opacity.get(),
-                                    )
-                                }),
-                            )
-                            .unwrap();
-                    }
-                }
-                usvg::NodeKind::Group(g) => self.tessellate_recursive(
-                    scale,
-                    rect,
-                    buffer,
-                    fill_tesselator,
-                    stroke_tesselator,
-                    &node,
-                    append_transform!(parent_transform, g.transform),
-                ),
-                usvg::NodeKind::Image(_) | usvg::NodeKind::Text(_) => {}
-            }
-        }
-    }
-}
-
-#[cfg(feature = "gradient")]
-fn linear_gradient(
-    g: &usvg::LinearGradient,
-    point: Point,
-    transform: usvg::Transform,
-) -> (usvg::Color, f64) {
-    use lyon::geom::euclid::Vector2D;
-    use lyon::geom::Line;
-
-    let point = {
-        let (x, y) = transform.apply(point.x as _, point.y as _);
-        Point::new(x as _, y as _)
-    };
-    let fac = {
-        let gradient_transform = append_transform!(transform, g.transform);
-        let ((x1, y1), (x2, y2)) = (
-            gradient_transform.apply(g.x1, g.y1),
-            gradient_transform.apply(g.x2, g.y2),
-        );
-        let line = Line {
-            point: Point::new(x1 as _, y1 as _),
-            vector: Vector2D::new(-(x2 - x1) as _, (y2 - y1) as _).yx(),
-        };
-        line.signed_distance_to_point(&point) / line.vector.length()
-    } as f64;
-
-    let fac = match g.spread_method {
-        usvg::SpreadMethod::Pad => fac,
-        usvg::SpreadMethod::Reflect => 1.0 - (fac.abs() % 2.0 - 1.0).abs(),
-        usvg::SpreadMethod::Repeat => fac - fac.floor(),
-    };
-
-    let mut local_fac = 0.0;
-    let [(mut color_a, mut opacity_a), (mut color_b, mut opacity_b)] =
-        [g.stops
-            .first()
-            .map(|f| (f.color, f.opacity.get()))
-            .unwrap_or((usvg::Color::black(), 0.0)); 2];
-    for stop in g.stops.windows(2) {
-        let offset_a = stop[0].offset.get();
-        let offset_b = stop[1].offset.get();
-        if fac > offset_a {
-            local_fac = (fac - offset_a) / (offset_b - offset_a);
-            color_a = stop[0].color;
-            opacity_a = stop[0].opacity.get();
-            color_b = stop[1].color;
-            opacity_b = stop[1].opacity.get();
-            break;
-        }
-    }
-    macro_rules! mix {
-        ($a:expr,$b:expr,$f:expr) => {{
-            let mut _r = $a;
-            _r = (($a as f64) * (1.0 as f64 - $f as f64) + ($b as f64) * ($f as f64)) as _;
-            _r
-        }};
-    }
-    (
-        usvg::Color::new_rgb(
-            mix!(color_a.red, color_b.red, local_fac),
-            mix!(color_a.green, color_b.green, local_fac),
-            mix!(color_a.blue, color_b.blue, local_fac),
-        ),
-        mix!(opacity_a, opacity_b, local_fac),
-    )
-}
-
-// https://github.com/nical/lyon/blob/f097646635a4df9d99a51f0d81b538e3c3aa1adf/examples/wgpu_svg/src/main.rs#L677
-struct PathConvIter<'a> {
-    iter: usvg::PathSegmentsIter<'a>,
-    prev: Point,
-    first: Point,
-    needs_end: bool,
-    deferred: Option<PathEvent>,
-}
-impl<'l> Iterator for PathConvIter<'l> {
-    type Item = PathEvent;
-    fn next(&mut self) -> Option<PathEvent> {
-        if self.deferred.is_some() {
-            return self.deferred.take();
-        }
-
-        let next = self.iter.next();
-        match next {
-            Some(usvg::PathSegment::MoveTo { x, y }) => {
-                if self.needs_end {
-                    let last = self.prev;
-                    let first = self.first;
-                    self.needs_end = false;
-                    self.prev = Point::new(x as f32, y as f32);
-                    self.deferred = Some(PathEvent::Begin { at: self.prev });
-                    self.first = self.prev;
-                    Some(PathEvent::End {
-                        last,
-                        first,
-                        close: false,
-                    })
-                } else {
-                    self.first = Point::new(x as f32, y as f32);
-                    self.needs_end = true;
-                    Some(PathEvent::Begin { at: self.first })
-                }
-            }
-            Some(usvg::PathSegment::LineTo { x, y }) => {
-                self.needs_end = true;
-                let from = self.prev;
-                self.prev = Point::new(x as f32, y as f32);
-                Some(PathEvent::Line {
-                    from,
-                    to: self.prev,
-                })
-            }
-            Some(usvg::PathSegment::CurveTo {
-                x1,
-                y1,
-                x2,
-                y2,
-                x,
-                y,
-            }) => {
-                self.needs_end = true;
-                let from = self.prev;
-                self.prev = Point::new(x as f32, y as f32);
-                Some(PathEvent::Cubic {
-                    from,
-                    ctrl1: Point::new(x1 as f32, y1 as f32),
-                    ctrl2: Point::new(x2 as f32, y2 as f32),
-                    to: self.prev,
-                })
-            }
-            Some(usvg::PathSegment::ClosePath) => {
-                self.needs_end = false;
-                self.prev = self.first;
-                Some(PathEvent::End {
-                    last: self.prev,
-                    first: self.first,
-                    close: true,
-                })
-            }
-            None => {
-                if self.needs_end {
-                    self.needs_end = false;
-                    let last = self.prev;
-                    let first = self.first;
-                    Some(PathEvent::End {
-                        last,
-                        first,
-                        close: false,
-                    })
-                } else {
-                    None
-                }
-            }
-        }
-    }
-}
-
-trait Convert<'l, T> {
-    fn convert(&'l self) -> T;
-}
-impl Convert<'_, StrokeOptions> for usvg::Stroke {
-    fn convert(&self) -> StrokeOptions {
-        let linecap = match self.linecap {
-            usvg::LineCap::Butt => LineCap::Butt,
-            usvg::LineCap::Square => LineCap::Square,
-            usvg::LineCap::Round => LineCap::Round,
-        };
-        let linejoin = match self.linejoin {
-            usvg::LineJoin::Miter => LineJoin::Miter,
-            usvg::LineJoin::Bevel => LineJoin::Bevel,
-            usvg::LineJoin::Round => LineJoin::Round,
-        };
-        StrokeOptions::default()
-            .with_line_width(self.width.get() as f32)
-            .with_line_cap(linecap)
-            .with_line_join(linejoin)
-    }
-}
-impl<'l> Convert<'l, PathConvIter<'l>> for usvg::Path {
-    fn convert(&'l self) -> PathConvIter<'l> {
-        PathConvIter {
-            iter: self.data.segments(),
-            first: Point::new(0.0, 0.0),
-            prev: Point::new(0.0, 0.0),
-            deferred: None,
-            needs_end: false,
-        }
-    }
-}
-impl Convert<'_, Color32> for (usvg::Color, f64) {
-    fn convert(&self) -> Color32 {
-        let (color, opacity) = *self;
-        Color32::from_rgba_unmultiplied(color.red, color.green, color.blue, (opacity * 255.0) as u8)
-    }
-}
-impl Convert<'_, Rect> for usvg::Rect {
-    fn convert(&self) -> Rect {
-        Rect::from_min_max(
-            [self.left() as f32, self.top() as f32].into(),
-            [self.right() as f32, self.bottom() as f32].into(),
-        )
+        to_egui_rect(tree.view_box.rect)
     }
 }

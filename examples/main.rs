@@ -163,7 +163,7 @@ impl eframe::App for Test {
                 });
                 ui.separator();
                 let response = Svg::new(ICON)
-                    .with_color_from_style(true)
+                    .with_color_from_style()
                     .with_sense(Sense::click_and_drag())
                     .show(ui);
                 ui.horizontal(|ui| {
@@ -180,6 +180,19 @@ impl eframe::App for Test {
                 ui.horizontal(|ui| {
                     ui.set_height(64.0);
                     Svg::new(include_bytes!("test_gradient.svg")).show_justified(ui);
+                    Svg::new(include_bytes!("test_gradient.svg"))
+                        .with_gradient(
+                            &[
+                                (0.0, Color32::TRANSPARENT),
+                                (0.25, Color32::BLACK),
+                                (0.5, Color32::RED),
+                                (1.0, Color32::RED),
+                            ],
+                            Pos2::ZERO,
+                            Pos2::new(32.0, 32.0),
+                            TextureWrapMode::Clamp,
+                        )
+                        .show_justified(ui);
                     Svg::new(include_bytes!("test_gradient_overflow.svg"))
                         .with_tolerance(0.01)
                         .show_justified(ui);
