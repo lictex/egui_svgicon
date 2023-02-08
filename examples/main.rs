@@ -1,5 +1,6 @@
 use eframe::*;
 use egui::*;
+use egui_extras::image::*;
 use egui_svgicon::*;
 
 const ICON: &[u8] = include_bytes!("test.svg");
@@ -16,12 +17,20 @@ fn main() {
             multisampling: 8,
             ..Default::default()
         },
-        Box::new(|_cc| Box::new(Test(8))),
+        Box::new(|_cc| {
+            Box::new(Test(
+                8,
+                RetainedImage::from_color_image(
+                    "",
+                    load_image_bytes(include_bytes!("uv.png")).unwrap(),
+                ),
+            ))
+        }),
     )
     .unwrap()
 }
 
-struct Test(usize);
+struct Test(usize, RetainedImage);
 impl eframe::App for Test {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(feature = "puffin")]
@@ -52,6 +61,11 @@ impl eframe::App for Test {
                                 )
                             })
                             .show(ui);
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.label("uv");
+                        Svg::new(ICON).with_texture(self.1.texture_id(ctx)).show(ui);
                     });
                 });
                 ui.separator();

@@ -13,6 +13,8 @@ puffin = { version = "0.14", optional = true }
 
 [dev-dependencies]
 eframe = { version = "0.20", features = ["wgpu"] }
+egui_extras = { version = "0.20", features = ["image"] }
+image = { version = "0.24", features = ["png"] }
 # puffin_egui = { version = "0.19" }
 
 [features]
@@ -26,3 +28,4 @@ puffin = ["dep:puffin"]
 [patch.crates-io]
 eframe = { git = "https://github.com/emilk/egui", rev = "d15ce22e2edeabf9813ba2965ec64f9c9d62a679" }
 egui = { git = "https://github.com/emilk/egui", rev = "d15ce22e2edeabf9813ba2965ec64f9c9d62a679" }
+egui_extras = { git = "https://github.com/emilk/egui", rev = "d15ce22e2edeabf9813ba2965ec64f9c9d62a679" }

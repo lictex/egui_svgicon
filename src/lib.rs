@@ -34,6 +34,7 @@ enum ColorOverride {
     None,
     FromStyle,
     Color(Color32),
+    Texture(TextureId),
     #[cfg(feature = "gradient")]
     Gradient(gradient::Gradient),
 }
@@ -162,17 +163,28 @@ impl Svg {
         self.color_override = ColorOverride::Color(color);
         self
     }
+    /// override all elements' color with given texture
+    pub fn with_texture(mut self, texture: TextureId) -> Self {
+        self.color_override = ColorOverride::Texture(texture);
+        self
+    }
     /// override all elements' color with given gradient
     pub fn with_gradient(
-        mut self,
+        self,
         colors: &[(f32, Color32)],
         start: Pos2,
         end: Pos2,
         wrap_mode: TextureWrapMode,
     ) -> Self {
+        #[cfg(not(feature = "gradient"))]
+        {
+            drop((colors, start, end, wrap_mode));
+            self
+        }
         #[cfg(feature = "gradient")]
         {
-            self.color_override = ColorOverride::Gradient(gradient::Gradient {
+            let mut svg = self;
+            svg.color_override = ColorOverride::Gradient(gradient::Gradient {
                 colors: colors
                     .iter()
                     .copied()
@@ -182,8 +194,8 @@ impl Svg {
                 end,
                 wrap_mode,
             });
+            svg
         }
-        self
     }
     /// override all elements' color with fg_stroke
     pub fn with_color_from_style(mut self) -> Self {
@@ -267,7 +279,7 @@ impl Svg {
         }
 
         #[cfg(not(feature = "cached"))]
-        let mut shape = self.tessellate(rect, size / self.svg_rect().size());
+        let mut shape = tessellation::tessellate(&self, rect, size / self.svg_rect().size());
 
         #[cfg(feature = "cached")]
         let mut shape = {
@@ -304,28 +316,37 @@ impl Svg {
             mesh.translate(rect.min.to_vec2());
             mesh
         };
-        let color_func: Option<Box<dyn Fn(&mut epaint::Vertex)>> = match &self.color_override {
-            ColorOverride::None => None,
+        macro_rules! svg_pos {
+            ($v:expr) => {
+                (($v.pos - rect.min) * (self.svg_rect().size() / rect.size())
+                    + self.svg_rect().min.to_vec2())
+                .to_pos2()
+            };
+        }
+        match &self.color_override {
+            ColorOverride::None => {}
             ColorOverride::FromStyle => {
-                let c = ui.style().interact(&response).fg_stroke.color;
-                Some(Box::new(move |f| f.color = c))
+                shape
+                    .vertices
+                    .iter_mut()
+                    .for_each(|v| v.color = ui.style().interact(&response).fg_stroke.color);
             }
-            ColorOverride::Color(c) => Some(Box::new(move |f| f.color = *c)),
+            ColorOverride::Color(c) => shape.vertices.iter_mut().for_each(|v| v.color = *c),
+            ColorOverride::Texture(t) => {
+                shape.texture_id = *t;
+                shape.vertices.iter_mut().for_each(|v| {
+                    v.color = Color32::WHITE;
+                    v.uv = (svg_pos!(v).to_vec2() / self.svg_rect().size()).to_pos2();
+                });
+            }
             #[cfg(feature = "gradient")]
             ColorOverride::Gradient(g) => {
-                let svg_rect = self.svg_rect();
-                Some(Box::new(move |f| {
-                    f.color = g.color_at_pos(
-                        ((f.pos - rect.min + svg_rect.min.to_vec2())
-                            * (svg_rect.size() / rect.size()))
-                        .to_pos2(),
-                    )
-                }))
+                shape
+                    .vertices
+                    .iter_mut()
+                    .for_each(|v| v.color = g.color_at_pos(svg_pos!(v)));
             }
         };
-        if let Some(color_func) = color_func {
-            shape.vertices.iter_mut().for_each(color_func);
-        }
 
         ui.painter().with_clip_rect(frame_rect).add(shape);
 
