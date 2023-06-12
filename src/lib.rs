@@ -109,6 +109,8 @@ impl Svg {
         #[cfg(not(feature = "static_cached"))] data: &[u8],
         #[cfg(feature = "static_cached")] data: &'static [u8],
     ) -> Self {
+        use usvg::TreeParsing;
+
         #[cfg(feature = "puffin")]
         puffin::profile_function!();
 

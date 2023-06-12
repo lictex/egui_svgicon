@@ -16,11 +16,16 @@ pub struct Gradient {
 }
 impl Gradient {
     pub fn new(g: &usvg::LinearGradient, transform: usvg::Transform) -> Self {
-        let gradient_transform = append_transform(transform, g.transform);
-        let ((x1, y1), (x2, y2)) = (
-            gradient_transform.apply(g.x1, g.y1),
-            gradient_transform.apply(g.x2, g.y2),
-        );
+        let gradient_transform = transform.post_concat(g.transform);
+        let ((x1, y1), (x2, y2)) = {
+            let mut p = [
+                usvg::tiny_skia_path::Point::from_xy(g.x1, g.y1),
+                usvg::tiny_skia_path::Point::from_xy(g.x2, g.y2),
+            ];
+
+            gradient_transform.map_points(&mut p);
+            ((p[0].x, p[0].y), (p[1].x, p[1].y))
+        };
         Gradient {
             colors: g
                 .stops

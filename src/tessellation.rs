@@ -44,11 +44,12 @@ fn tessellate_recursive(
         match &*node.borrow() {
             usvg::NodeKind::Path(p) => {
                 let new_egui_vertex =
-                    |point: Point, paint: &usvg::Paint, opacity: f64| -> epaint::Vertex {
-                        let transform = append_transform(parent_transform, p.transform);
+                    |point: Point, paint: &usvg::Paint, opacity: f32| -> epaint::Vertex {
+                        let transform = parent_transform.pre_concat(p.transform);
                         let svg_pos = {
-                            let (x, y) = transform.apply(point.x as _, point.y as _);
-                            Pos2::new(x as _, y as _)
+                            let mut point = usvg::tiny_skia_path::Point::from_xy(point.x, point.y);
+                            transform.map_point(&mut point);
+                            Pos2::new(point.x, point.y)
                         };
                         let egui_pos = {
                             let mut pos = svg_pos;
@@ -109,7 +110,7 @@ fn tessellate_recursive(
                 fill_tesselator,
                 stroke_tesselator,
                 &node,
-                append_transform(parent_transform, g.transform),
+                parent_transform.pre_concat(g.transform),
             ),
             usvg::NodeKind::Image(_) | usvg::NodeKind::Text(_) => {}
         }
@@ -118,7 +119,7 @@ fn tessellate_recursive(
 
 // https://github.com/nical/lyon/blob/f097646635a4df9d99a51f0d81b538e3c3aa1adf/examples/wgpu_svg/src/main.rs#L677
 pub struct PathConvIter<'a> {
-    iter: usvg::PathSegmentsIter<'a>,
+    iter: usvg::tiny_skia_path::PathSegmentsIter<'a>,
     prev: Point,
     first: Point,
     needs_end: bool,
@@ -133,7 +134,10 @@ impl<'l> Iterator for PathConvIter<'l> {
 
         let next = self.iter.next();
         match next {
-            Some(usvg::PathSegment::MoveTo { x, y }) => {
+            Some(usvg::tiny_skia_path::PathSegment::MoveTo(usvg::tiny_skia_path::Point {
+                x,
+                y,
+            })) => {
                 if self.needs_end {
                     let last = self.prev;
                     let first = self.first;
@@ -152,7 +156,10 @@ impl<'l> Iterator for PathConvIter<'l> {
                     Some(PathEvent::Begin { at: self.first })
                 }
             }
-            Some(usvg::PathSegment::LineTo { x, y }) => {
+            Some(usvg::tiny_skia_path::PathSegment::LineTo(usvg::tiny_skia_path::Point {
+                x,
+                y,
+            })) => {
                 self.needs_end = true;
                 let from = self.prev;
                 self.prev = Point::new(x as f32, y as f32);
@@ -161,14 +168,11 @@ impl<'l> Iterator for PathConvIter<'l> {
                     to: self.prev,
                 })
             }
-            Some(usvg::PathSegment::CurveTo {
-                x1,
-                y1,
-                x2,
-                y2,
-                x,
-                y,
-            }) => {
+            Some(usvg::tiny_skia_path::PathSegment::CubicTo(
+                usvg::tiny_skia_path::Point { x: x1, y: y1 },
+                usvg::tiny_skia_path::Point { x: x2, y: y2 },
+                usvg::tiny_skia_path::Point { x, y },
+            )) => {
                 self.needs_end = true;
                 let from = self.prev;
                 self.prev = Point::new(x as f32, y as f32);
@@ -179,7 +183,7 @@ impl<'l> Iterator for PathConvIter<'l> {
                     to: self.prev,
                 })
             }
-            Some(usvg::PathSegment::ClosePath) => {
+            Some(usvg::tiny_skia_path::PathSegment::Close) => {
                 self.needs_end = false;
                 self.prev = self.first;
                 Some(PathEvent::End {
@@ -202,6 +206,7 @@ impl<'l> Iterator for PathConvIter<'l> {
                     None
                 }
             }
+            _ => unimplemented!(),
         }
     }
 }

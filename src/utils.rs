@@ -1,11 +1,6 @@
 use lyon::lyon_tessellation::StrokeOptions;
 use lyon::path::*;
 
-pub fn append_transform(mut a: usvg::Transform, b: usvg::Transform) -> usvg::Transform {
-    a.append(&b);
-    a
-}
-
 pub fn to_lyon_stroke(stroke: &usvg::Stroke) -> StrokeOptions {
     let linecap = match stroke.linecap {
         usvg::LineCap::Butt => LineCap::Butt,
@@ -22,7 +17,7 @@ pub fn to_lyon_stroke(stroke: &usvg::Stroke) -> StrokeOptions {
         .with_line_cap(linecap)
         .with_line_join(linejoin)
 }
-pub fn to_egui_color(color: usvg::Color, opacity: f64) -> egui::Color32 {
+pub fn to_egui_color(color: usvg::Color, opacity: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         color.red,
         color.green,
@@ -30,7 +25,7 @@ pub fn to_egui_color(color: usvg::Color, opacity: f64) -> egui::Color32 {
         (opacity * 255.0) as u8,
     )
 }
-pub fn to_egui_rect(rect: usvg::Rect) -> egui::Rect {
+pub fn to_egui_rect(rect: usvg::NonZeroRect) -> egui::Rect {
     egui::Rect::from_min_max(
         [rect.left() as f32, rect.top() as f32].into(),
         [rect.right() as f32, rect.bottom() as f32].into(),
