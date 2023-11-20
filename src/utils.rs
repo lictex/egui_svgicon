@@ -11,6 +11,7 @@ pub fn to_lyon_stroke(stroke: &usvg::Stroke) -> StrokeOptions {
         usvg::LineJoin::Miter => LineJoin::Miter,
         usvg::LineJoin::Bevel => LineJoin::Bevel,
         usvg::LineJoin::Round => LineJoin::Round,
+        usvg::LineJoin::MiterClip => LineJoin::MiterClip,
     };
     StrokeOptions::default()
         .with_line_width(stroke.width.get() as f32)

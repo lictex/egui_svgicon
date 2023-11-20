@@ -6,16 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egui = { version = "0.22" }
-usvg = { version = "0.34" }
+egui = { version = "0.23" }
+usvg = { version = "0.36" }
 lyon = { version = "1.0" }
-puffin = { version = "0.16", optional = true }
+puffin = { version = "0.17", optional = true }
 
 [dev-dependencies]
-eframe = { version = "0.22", features = ["wgpu"] }
-egui_extras = { version = "0.22", features = ["image"] }
+eframe = { version = "0.23", features = ["wgpu"] }
+egui_extras = { version = "0.23", features = ["image"] }
 image = { version = "0.24", features = ["png"] }
-puffin_egui = { version = "0.20" }
+puffin_egui = { version = "0.23" }
 
 [features]
 cached = []                # cache svg trees and meshes

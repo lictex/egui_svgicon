@@ -121,7 +121,9 @@ impl Svg {
         let tree = {
             use egui::epaint::ahash::*;
             use std::cell::RefCell;
-            use std::hash::*;
+            use std::hash::BuildHasher;
+            use std::hash::Hash;
+            use std::hash::Hasher;
             use std::rc::Rc;
 
             thread_local! {
@@ -193,7 +195,7 @@ impl Svg {
     ) -> Self {
         #[cfg(not(feature = "gradient"))]
         {
-            drop((colors, start, end, wrap_mode));
+            let _ = (colors, start, end, wrap_mode);
             self
         }
         #[cfg(feature = "gradient")]
