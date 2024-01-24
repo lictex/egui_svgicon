@@ -12,9 +12,9 @@ fn main() {
     eframe::run_native(
         "svg icons test",
         eframe::NativeOptions {
-            initial_window_size: Some(egui::vec2(854.0, 480.0)),
+            viewport: ViewportBuilder::default().with_inner_size(egui::vec2(854.0, 480.0)),
             default_theme: Theme::Light,
-            multisampling: 8,
+            multisampling: 1,
             ..Default::default()
         },
         Box::new(|_cc| {
@@ -75,7 +75,7 @@ impl eframe::App for Test {
                         ($u:expr,$a:expr) => {
                             $u.painter().rect_stroke(
                                 Rect::from_min_size($u.cursor().min, $a.into()),
-                                Rounding::none(),
+                                Rounding::ZERO,
                                 Stroke {
                                     width: 1.0,
                                     color: Color32::LIGHT_GRAY,
@@ -131,7 +131,7 @@ impl eframe::App for Test {
                                 rect.max -= margin.right_bottom();
                                 rect
                             },
-                            Rounding::none(),
+                            Rounding::ZERO,
                             Stroke {
                                 width: 1.0,
                                 color: Color32::DARK_RED,

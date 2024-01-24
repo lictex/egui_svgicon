@@ -37,15 +37,15 @@ fn tessellate_recursive(
     buffer: &mut VertexBuffers<epaint::Vertex, u32>,
     fill_tesselator: &mut FillTessellator,
     stroke_tesselator: &mut StrokeTessellator,
-    parent: &usvg::Node,
+    parent: &usvg::Group,
     parent_transform: usvg::Transform,
 ) {
-    for node in parent.children() {
-        match &*node.borrow() {
-            usvg::NodeKind::Path(p) => {
+    for node in &parent.children {
+        match node {
+            usvg::Node::Path(p) => {
                 let new_egui_vertex =
                     |point: Point, paint: &usvg::Paint, opacity: f32| -> epaint::Vertex {
-                        let transform = parent_transform.pre_concat(p.transform);
+                        let transform = parent_transform;
                         let svg_pos = {
                             let mut point = usvg::tiny_skia_path::Point::from_xy(point.x, point.y);
                             transform.map_point(&mut point);
@@ -102,17 +102,17 @@ fn tessellate_recursive(
                         .unwrap();
                 }
             }
-            usvg::NodeKind::Group(g) => tessellate_recursive(
+            usvg::Node::Group(g) => tessellate_recursive(
                 svg,
                 scale,
                 rect,
                 buffer,
                 fill_tesselator,
                 stroke_tesselator,
-                &node,
+                &g,
                 parent_transform.pre_concat(g.transform),
             ),
-            usvg::NodeKind::Image(_) | usvg::NodeKind::Text(_) => {}
+            usvg::Node::Image(_) | usvg::Node::Text(_) => {}
         }
     }
 }
